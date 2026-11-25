@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Verito · Cargar picks</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:var(--tg-theme-bg-color,#fff); --tx:var(--tg-theme-text-color,#111);
+    --hint:var(--tg-theme-hint-color,#888); --acc:var(--tg-theme-button-color,#2a8bf2);
+    --acctx:var(--tg-theme-button-text-color,#fff); --card:var(--tg-theme-secondary-bg-color,#f2f3f5);
+    --err:#d93b3b;
+  }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.4 -apple-system,system-ui,Roboto,sans-serif;padding:12px 12px 90px}
+  h1{font-size:17px;margin:4px 0 12px}
+  .pick{background:var(--card);border-radius:12px;padding:12px;margin-bottom:12px}
+  .pick-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .pick-h b{font-size:15px}
+  .x{background:none;border:0;color:var(--hint);font-size:20px;padding:0 4px}
+  label{display:block;font-size:12px;color:var(--hint);margin:8px 0 3px}
+  input,select{width:100%;padding:9px 10px;border:1px solid rgba(128,128,128,.3);border-radius:8px;
+    background:var(--bg);color:var(--tx);font-size:15px}
+  .row{display:flex;gap:8px} .row>*{flex:1}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}
+  .seg button,.chip{border:1px solid rgba(128,128,128,.35);background:var(--bg);color:var(--tx);
+    border-radius:18px;padding:6px 12px;font-size:14px}
+  .seg button.on,.chip.on{background:var(--acc);color:var(--acctx);border-color:var(--acc)}
+  .pata{border-left:3px solid var(--acc);padding-left:10px;margin-top:10px}
+  .pata-h{display:flex;justify-content:space-between;font-size:13px;color:var(--hint);margin-top:6px}
+  .add{width:100%;margin-top:10px;padding:9px;border:1px dashed var(--acc);border-radius:8px;
+    background:none;color:var(--acc);font-size:14px}
+  .bad{border-color:var(--err)!important}
+  #msg{color:var(--err);font-size:13px;min-height:18px;margin:6px 2px}
+  #enviar{position:fixed;left:12px;right:12px;bottom:12px;padding:13px;border:0;border-radius:10px;
+    background:var(--acc);color:var(--acctx);font-size:16px;font-weight:600}
+</style>
+</head>
+<body>
+<h1>📝 Cargar picks</h1>
+<div id="lista"></div>
+<button class="add" id="otro">➕ Otro pick</button>
+<div id="msg"></div>
+<button id="enviar">Enviar a Verito</button>
+
+<datalist id="dl-canales"></datalist>
+
+<script>
+const tg = window.Telegram && Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const q = new URLSearchParams(location.search);
+const CASAS = (q.get("casas") || "Betwinner,Betano,Betsson,Bet365").split(",").filter(Boolean);
+const CANALES = (q.get("canales") || "").split("|").filter(Boolean);
+document.getElementById("dl-canales").innerHTML = CANALES.map(c => `<option value="${esc(c)}">`).join("");
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+function hoy(d=0){const t=new Date();t.setDate(t.getDate()+d);
+  return t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0")}
+
+let ultimoCanal = CANALES[0] || "", ultimasCasas = [...CASAS];
+
+function pataHTML(i, combi){
+  return `<div class="pata" data-pata>
+    ${combi?`<div class="pata-h"><span>Pata ${i+1}</span><button class="x" data-del-pata>✕</button></div>`:""}
+    <div class="row">
+      <div><label>Día</label><div class="seg" data-dia>
+        <button type="button" data-d="0" class="on">Hoy</button><button type="button" data-d="1">Mañana</button>
+        <button type="button" data-d="x">📅</button></div>
+        <input type="date" data-fecha value="${hoy()}" style="display:none;margin-top:6px"></div>
+      <div style="flex:.7"><label>Hora</label><input type="time" data-hora></div>
+    </div>
+    <label>Partido</label><input data-partido placeholder="Boca vs River">
+    <div class="row">
+      <div style="flex:2"><label>Apuesta</label><input data-apuesta placeholder="Más de 2,5 goles"></div>
+      <div><label>Cuota ${combi?"(opc.)":"(opcional)"}</label><input data-cuota inputmode="decimal" placeholder="1.85"></div>
+    </div>
+  </div>`;
+}
+
+function nuevoPick(){
+  const el = document.createElement("div");
+  el.className = "pick";
+  el.innerHTML = `
+    <div class="pick-h"><b data-titulo></b><button class="x" data-del>✕</button></div>
+    <div class="seg" data-tipo><button type="button" class="on" data-t="simple">Simple</button>
+      <button type="button" data-t="combinada">🔗 Combinada</button></div>
+    <div data-patas></div>
+    <button type="button" class="add" data-add-pata style="display:none">➕ Agregar pata</button>
+    <div data-total style="display:none"><label>Cuota total de la combinada (opcional)</label>
+      <input data-cuota-total inputmode="decimal" placeholder="3.45"></div>
+    <label>Canal</label><input data-canal list="dl-canales" placeholder="KANUTIPS" value="${esc(ultimoCanal)}">
+    <label>Casas</label><div class="seg" data-casas>${CASAS.map(c =>
+      `<button type="button" class="chip ${ultimasCasas.includes(c)?"on":""}" data-casa="${esc(c)}">${esc(c)}</button>`).join("")}</div>`;
+  document.getElementById("lista").appendChild(el);
+  setTipo(el, "simple");
+  numerar();
+  return el;
+}
+
+function setTipo(el, t){
+  el.dataset.modo = t;
+  el.querySelectorAll("[data-tipo] button").forEach(b => b.classList.toggle("on", b.dataset.t === t));
+  const cont = el.querySelector("[data-patas]");
+  const n = t === "combinada" ? Math.max(2, cont.children.length) : 1;
+  const viejos = [...cont.children].map(leerPata);
+  cont.innerHTML = "";
+  for (let i = 0; i < n; i++) agregarPata(el, viejos[i]);
+  el.querySelector("[data-add-pata]").style.display = t === "combinada" ? "" : "none";
+  el.querySelector("[data-total]").style.display = t === "combinada" ? "" : "none";
+}
+
+function agregarPata(el, datos){
+  const cont = el.querySelector("[data-patas]");
+  const combi = el.dataset.modo === "combinada";
+  cont.insertAdjacentHTML("beforeend", pataHTML(cont.children.length, combi));
+  const p = cont.lastElementChild;
+  if (datos) {
+    p.querySelector("[data-fecha]").value = datos.fecha; p.querySelector("[data-hora]").value = datos.hora;
+    p.querySelector("[data-partido]").value = datos.partido; p.querySelector("[data-apuesta]").value = datos.apuesta;
+    p.querySelector("[data-cuota]").value = datos.cuota || "";
+    marcarDia(p);
+  }
+}
+
+function marcarDia(p){
+  const f = p.querySelector("[data-fecha]").value;
+  const d = f === hoy() ? "0" : f === hoy(1) ? "1" : "x";
+  p.querySelectorAll("[data-dia] button").forEach(b => b.classList.toggle("on", b.dataset.d === d));
+  p.querySelector("[data-fecha]").style.display = d === "x" ? "" : "none";
+}
+
+function numerar(){
+  const ps = document.querySelectorAll(".pick");
+  ps.forEach((p, i) => {
+    p.querySelector("[data-titulo]").textContent = `Pick ${i+1}`;
+    p.querySelector("[data-del]").style.visibility = ps.length > 1 ? "" : "hidden";
+    p.querySelectorAll("[data-pata]").forEach((pt, j) => {
+      const h = pt.querySelector(".pata-h span"); if (h) h.textContent = `Pata ${j+1}`;
+    });
+  });
+}
+
+function leerPata(p){
+  return { fecha: p.querySelector("[data-fecha]").value, hora: p.querySelector("[data-hora]").value,
+    partido: p.querySelector("[data-partido]").value.trim(), apuesta: p.querySelector("[data-apuesta]").value.trim(),
+    cuota: p.querySelector("[data-cuota]").value.trim().replace(",", ".") };
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const pick = b.closest(".pick"), pata = b.closest("[data-pata]");
+  if (b.dataset.t) setTipo(pick, b.dataset.t);
+  else if (b.dataset.d !== undefined && pata) {
+    const f = pata.querySelector("[data-fecha]");
+    if (b.dataset.d !== "x") f.value = hoy(+b.dataset.d);
+    pata.querySelectorAll("[data-dia] button").forEach(x => x.classList.toggle("on", x === b));
+    f.style.display = b.dataset.d === "x" ? "" : "none";
+  }
+  else if (b.dataset.casa) { b.classList.toggle("on"); }
+  else if (b.hasAttribute("data-add-pata")) { agregarPata(pick); numerar(); }
+  else if (b.hasAttribute("data-del-pata")) {
+    if (pick.querySelectorAll("[data-pata]").length > 2) { pata.remove(); numerar(); }
+    else aviso("Una combinada necesita al menos 2 patas.");
+  }
+  else if (b.hasAttribute("data-del")) { pick.remove(); numerar(); }
+  if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+});
+
+document.getElementById("otro").onclick = () => {
+  const ps = document.querySelectorAll(".pick"), ult = ps[ps.length-1];
+  if (ult) {
+    ultimoCanal = ult.querySelector("[data-canal]").value.trim();
+    ultimasCasas = [...ult.querySelectorAll("[data-casa].on")].map(x => x.dataset.casa);
+  }
+  nuevoPick().scrollIntoView({behavior: "smooth"});
+};
+
+function aviso(t){ document.getElementById("msg").textContent = t; if (t && tg) tg.HapticFeedback?.notificationOccurred("error"); }
+
+function juntar(){
+  document.querySelectorAll(".bad").forEach(x => x.classList.remove("bad"));
+  const picks = [], errores = [];
+  document.querySelectorAll(".pick").forEach((el, i) => {
+    const patas = [...el.querySelectorAll("[data-pata]")].map(p => {
+      const d = leerPata(p);
+      for (const [k, sel] of [["hora","[data-hora]"],["partido","[data-partido]"],["apuesta","[data-apuesta]"]])
+        if (!d[k]) { p.querySelector(sel).classList.add("bad"); errores.push(`Pick ${i+1}: falta ${k}`); }
+      if (d.cuota && !(+d.cuota > 1)) { p.querySelector("[data-cuota]").classList.add("bad"); errores.push(`Pick ${i+1}: cuota rara`); }
+      return { f: d.fecha, h: d.hora, p: d.partido, a: d.apuesta, c: d.cuota || null };
+    });
+    const casas = [...el.querySelectorAll("[data-casa].on")].map(x => x.dataset.casa);
+    if (!casas.length) { el.querySelector("[data-casas]").classList.add("bad"); errores.push(`Pick ${i+1}: elegí al menos una casa`); }
+    const canal = el.querySelector("[data-canal]").value.trim();
+    const total = el.querySelector("[data-cuota-total]").value.trim().replace(",", ".");
+    if (el.dataset.modo === "combinada")
+      picks.push({ t: "c", c: total || null, canal, casas, patas });
+    else
+      picks.push({ t: "s", canal, casas, ...patas[0] });
+  });
+  return { picks, errores };
+}
+
+document.getElementById("enviar").onclick = () => {
+  const { picks, errores } = juntar();
+  if (errores.length) return aviso("⚠️ " + [...new Set(errores)].slice(0, 3).join(" · "));
+  const datos = JSON.stringify({ v: 1, picks });
+  if (new Blob([datos]).size > 4000) return aviso("⚠️ Es mucho para un solo envío: mandá la mitad ahora y el resto después.");
+  aviso("");
+  if (tg && tg.sendData) tg.sendData(datos);   // cierra la mini app y se lo pasa a Verito
+  else alert("Abrí esto desde el botón 📝 Cargar de Verito en Telegram.\n\n" + datos);
+};
+
+nuevoPick();
+</script>
+</body>
+</html>
