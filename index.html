@@ -32,6 +32,8 @@
   .add{width:100%;margin-top:10px;padding:9px;border:1px dashed var(--acc);border-radius:8px;
     background:none;color:var(--acc);font-size:14px}
   .bad{border-color:var(--err)!important}
+  .cq{display:grid;grid-template-columns:1fr 90px;gap:6px 8px;align-items:center}
+  .cq span{font-size:14px} .cq input{padding:7px 8px;text-align:center}
   #msg{color:var(--err);font-size:13px;min-height:18px;margin:6px 2px}
   #enviar{position:fixed;left:12px;right:12px;bottom:12px;padding:13px;border:0;border-radius:10px;
     background:var(--acc);color:var(--acctx);font-size:16px;font-weight:600}
@@ -50,7 +52,7 @@
 const tg = window.Telegram && Telegram.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 const q = new URLSearchParams(location.search);
-const CASAS = (q.get("casas") || "Betwinner,Betano,Betsson,Bet365").split(",").filter(Boolean);
+const CASAS = (q.get("casas") || "Bet365,Betsson,Betwinner,Jugabet,BetJan").split(",").filter(Boolean);
 const CANALES = (q.get("canales") || "").split("|").filter(Boolean);
 document.getElementById("dl-canales").innerHTML = CANALES.map(c => `<option value="${esc(c)}">`).join("");
 
@@ -58,7 +60,7 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;","
 function hoy(d=0){const t=new Date();t.setDate(t.getDate()+d);
   return t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0")}
 
-let ultimoCanal = CANALES[0] || "", ultimasCasas = [...CASAS];
+let ultimoCanal = CANALES[0] || "";
 
 function pataHTML(i, combi){
   return `<div class="pata" data-pata>
@@ -90,8 +92,11 @@ function nuevoPick(){
     <div data-total style="display:none"><label>Cuota total de la combinada (opcional)</label>
       <input data-cuota-total inputmode="decimal" placeholder="3.45"></div>
     <label>Canal</label><input data-canal list="dl-canales" placeholder="KANUTIPS" value="${esc(ultimoCanal)}">
-    <label>Casas</label><div class="seg" data-casas>${CASAS.map(c =>
-      `<button type="button" class="chip ${ultimasCasas.includes(c)?"on":""}" data-casa="${esc(c)}">${esc(c)}</button>`).join("")}</div>`;
+    <label>Cuota en cada casa (dejá vacía la que no lo tenga)</label>
+    <div class="cq" data-cuotas>${CASAS.map(c =>
+      `<span>${esc(c)}</span><input data-cq="${esc(c)}" inputmode="decimal" placeholder="—">`).join("")}</div>
+    <label>Cuota mínima (si ya la tenés, opcional)</label>
+    <input data-min inputmode="decimal" placeholder="1.85">`;
   document.getElementById("lista").appendChild(el);
   setTipo(el, "simple");
   numerar();
@@ -157,7 +162,6 @@ document.addEventListener("click", e => {
     pata.querySelectorAll("[data-dia] button").forEach(x => x.classList.toggle("on", x === b));
     f.style.display = b.dataset.d === "x" ? "" : "none";
   }
-  else if (b.dataset.casa) { b.classList.toggle("on"); }
   else if (b.hasAttribute("data-add-pata")) { agregarPata(pick); numerar(); }
   else if (b.hasAttribute("data-del-pata")) {
     if (pick.querySelectorAll("[data-pata]").length > 2) { pata.remove(); numerar(); }
@@ -169,10 +173,7 @@ document.addEventListener("click", e => {
 
 document.getElementById("otro").onclick = () => {
   const ps = document.querySelectorAll(".pick"), ult = ps[ps.length-1];
-  if (ult) {
-    ultimoCanal = ult.querySelector("[data-canal]").value.trim();
-    ultimasCasas = [...ult.querySelectorAll("[data-casa].on")].map(x => x.dataset.casa);
-  }
+  if (ult) ultimoCanal = ult.querySelector("[data-canal]").value.trim();
   nuevoPick().scrollIntoView({behavior: "smooth"});
 };
 
@@ -189,14 +190,21 @@ function juntar(){
       if (d.cuota && !(+d.cuota > 1)) { p.querySelector("[data-cuota]").classList.add("bad"); errores.push(`Pick ${i+1}: cuota rara`); }
       return { f: d.fecha, h: d.hora, p: d.partido, a: d.apuesta, c: d.cuota || null };
     });
-    const casas = [...el.querySelectorAll("[data-casa].on")].map(x => x.dataset.casa);
-    if (!casas.length) { el.querySelector("[data-casas]").classList.add("bad"); errores.push(`Pick ${i+1}: elegí al menos una casa`); }
+    const cq = {};
+    el.querySelectorAll("[data-cq]").forEach(inp => {
+      const v = inp.value.trim().replace(",", ".");
+      if (!v) return;
+      if (!(+v > 1)) { inp.classList.add("bad"); errores.push(`Pick ${i+1}: cuota rara en ${inp.dataset.cq}`); return; }
+      cq[inp.dataset.cq] = v;
+    });
+    const mn = el.querySelector("[data-min]").value.trim().replace(",", ".");
+    if (mn && !(+mn > 1)) { el.querySelector("[data-min]").classList.add("bad"); errores.push(`Pick ${i+1}: mínima rara`); }
     const canal = el.querySelector("[data-canal]").value.trim();
     const total = el.querySelector("[data-cuota-total]").value.trim().replace(",", ".");
     if (el.dataset.modo === "combinada")
-      picks.push({ t: "c", c: total || null, canal, casas, patas });
+      picks.push({ t: "c", c: total || null, canal, q: cq, m: mn || null, patas });
     else
-      picks.push({ t: "s", canal, casas, ...patas[0] });
+      picks.push({ t: "s", canal, q: cq, m: mn || null, ...patas[0] });
   });
   return { picks, errores };
 }
